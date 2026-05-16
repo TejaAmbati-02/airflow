@@ -1,6 +1,8 @@
-# Airflow CeleryExecutor — Docker Compose Setup
+# Airflow CeleryExecutor — Docker & Podman Setup
 
 A production-aware Apache Airflow setup using **CeleryExecutor**, **Redis** as the message broker, and **PostgreSQL** as the metadata database. Includes Flower for real-time worker monitoring.
+
+Supports both **Docker Compose** and **Podman Compose**.
 
 ---
 
@@ -21,7 +23,7 @@ A production-aware Apache Airflow setup using **CeleryExecutor**, **Redis** as t
 
 ```
 project/
-├── docker-compose.yml        # All service definitions
+├── docker-compose.yml        # All service definitions (works with both Docker and Podman)
 ├── .env                      # Credentials and secrets (never commit this)
 ├── .gitignore                # Ensures .env stays out of version control
 ├── requirements.txt          # Airflow extras and DAG dependencies
@@ -32,11 +34,27 @@ project/
 
 ---
 
+## Docker vs Podman — Key Differences
+
+| Feature              | Docker                        | Podman                                      |
+|----------------------|-------------------------------|---------------------------------------------|
+| Daemon               | Requires `dockerd` running    | Daemonless — no background service needed   |
+| Root                 | Runs as root by default       | Rootless by default (more secure)           |
+| Compose tool         | `docker compose` (built-in)   | `podman compose` (Podman 4.x+) or `podman-compose` (pip) |
+| Compatibility        | —                             | Drop-in compatible with `docker-compose.yml` |
+| Socket               | `/var/run/docker.sock`        | `/run/user/$UID/podman/podman.sock`         |
+
+The `docker-compose.yml` file is identical for both — no changes needed.
+
+---
+
 ## Prerequisites
 
-- [Docker](https://docs.docker.com/get-docker/) installed
-- [Docker Compose](https://docs.docker.com/compose/install/) v2+ installed
-- `openssl` available in your terminal (pre-installed on macOS and most Linux distros)
+### Docker
+
+- [Docker Desktop](https://docs.docker.com/get-docker/) (macOS/Windows) or Docker Engine (Linux)
+- Docker Compose v2+ (bundled with Docker Desktop; on Linux: `sudo apt install docker-compose-plugin`)
+- `openssl`
 
 Verify:
 
@@ -45,6 +63,32 @@ docker --version
 docker compose version
 openssl version
 ```
+
+### Podman
+
+- [Podman](https://podman.io/getting-started/installation) v4.0+
+- `podman-compose` — install via pip:
+
+```bash
+pip install podman-compose
+```
+
+Or if you're on Podman 4.x+, the built-in `podman compose` command works too (it calls `podman-compose` under the hood if installed).
+
+Verify:
+
+```bash
+podman --version
+podman-compose --version
+openssl version
+```
+
+> **macOS Podman users:** You need to initialize the Podman machine before first use:
+>
+> ```bash
+> podman machine init
+> podman machine start
+> ```
 
 ---
 
@@ -109,7 +153,7 @@ AIRFLOW_ADMIN_PASSWORD=output_from_openssl_rand_base64_16
 
 ## Step 3 — Make the Entrypoint Executable
 
-Docker volume mounts preserve file permissions. If `entrypoint.sh` isn't executable, the webserver container will fail immediately with a permission error.
+Volume mounts preserve file permissions. If `entrypoint.sh` isn't executable, the webserver container will fail immediately with a permission error.
 
 ```bash
 chmod +x ./script/entrypoint.sh
@@ -121,8 +165,16 @@ Run this once. You don't need to repeat it unless you re-clone the repo.
 
 ## Step 4 — Start the Stack
 
+### Docker
+
 ```bash
 docker compose up -d
+```
+
+### Podman
+
+```bash
+podman-compose up -d
 ```
 
 **What `-d` does:** Runs all containers in detached mode (background). Your terminal stays free.
@@ -137,14 +189,30 @@ docker compose up -d
 
 The full startup takes roughly **2–3 minutes** on first run due to `pip install`.
 
+> **Podman rootless note:** If containers can't reach each other by service name, you may need to enable the `podman` network DNS plugin:
+>
+> ```bash
+> sudo systemctl enable --now podman-netavark-waitonline.service
+> ```
+>
+> Or explicitly set `dns_enabled: true` under the network in `docker-compose.yml`.
+
 ---
 
 ## Step 5 — Verify Everything is Running
 
-Check container status:
+### Docker
 
 ```bash
 docker compose ps
+```
+
+### Podman
+
+```bash
+podman-compose ps
+# or check directly
+podman ps
 ```
 
 All services should show `healthy` or `running`. If any show `exited`, check logs immediately (see Troubleshooting below).
@@ -153,10 +221,10 @@ All services should show `healthy` or `running`. If any show `exited`, check log
 
 ## Step 6 — Access the UIs
 
-| UI          | URL                      | Credentials                     |
-|-------------|--------------------------|----------------------------------|
-| Airflow     | <http://localhost:8080>    | `admin` / your AIRFLOW_ADMIN_PASSWORD |
-| Flower      | <http://localhost:5555>    | No login by default              |
+| UI          | URL                      | Credentials                            |
+|-------------|--------------------------|----------------------------------------|
+| Airflow     | <http://localhost:8080>    | `admin` / your `AIRFLOW_ADMIN_PASSWORD`|
+| Flower      | <http://localhost:5555>    | No login by default                    |
 
 ---
 
@@ -164,14 +232,30 @@ All services should show `healthy` or `running`. If any show `exited`, check log
 
 CeleryExecutor's main advantage is horizontal scaling. Add more workers without touching any config:
 
+### Docker
+
 ```bash
 docker compose up -d --scale worker=3
 ```
 
-This spins up 3 worker containers. All of them pull tasks from the same Redis queue. Scale back down the same way:
+### Podman
+
+```bash
+podman-compose up -d --scale worker=3
+```
+
+All worker containers pull tasks from the same Redis queue. Scale back down:
+
+### Docker
 
 ```bash
 docker compose up -d --scale worker=1
+```
+
+### Podman
+
+```bash
+podman-compose up -d --scale worker=1
 ```
 
 ---
@@ -180,37 +264,46 @@ docker compose up -d --scale worker=1
 
 ### View logs for a specific service
 
-```bash
-docker compose logs -f webserver
-docker compose logs -f scheduler
-docker compose logs -f worker
-```
+| Action              | Docker                              | Podman                               |
+|---------------------|-------------------------------------|--------------------------------------|
+| Webserver logs      | `docker compose logs -f webserver`  | `podman-compose logs -f webserver`   |
+| Scheduler logs      | `docker compose logs -f scheduler`  | `podman-compose logs -f scheduler`   |
+| Worker logs         | `docker compose logs -f worker`     | `podman-compose logs -f worker`      |
 
 ### Restart a single service
 
-```bash
-docker compose restart scheduler
-```
+| Action              | Docker                              | Podman                                |
+|---------------------|-------------------------------------|---------------------------------------|
+| Restart scheduler   | `docker compose restart scheduler`  | `podman-compose restart scheduler`    |
 
 ### Stop everything (keeps data)
 
-```bash
-docker compose down
-```
+| Docker                  | Podman                      |
+|-------------------------|-----------------------------|
+| `docker compose down`   | `podman-compose down`       |
 
 ### Stop everything and wipe all data (fresh start)
 
-```bash
-docker compose down -v
-```
+| Docker                     | Podman                         |
+|----------------------------|--------------------------------|
+| `docker compose down -v`   | `podman-compose down -v`       |
 
 > `-v` removes named volumes. This deletes your Postgres database and all DAG run history. Only use this when you want a clean slate.
 
 ### Run a one-off Airflow CLI command
 
+#### Docker
+
 ```bash
 docker compose exec webserver airflow dags list
 docker compose exec webserver airflow users list
+```
+
+#### Podman
+
+```bash
+podman exec airflow-webserver airflow dags list
+podman exec airflow-webserver airflow users list
 ```
 
 ---
@@ -229,8 +322,16 @@ requests==2.31.0
 
 Then restart the affected containers to reinstall:
 
+### Docker
+
 ```bash
 docker compose restart webserver scheduler worker
+```
+
+### Podman
+
+```bash
+podman-compose restart webserver scheduler worker
 ```
 
 ---
@@ -239,38 +340,104 @@ docker compose restart webserver scheduler worker
 
 ### Webserver exits immediately
 
+#### Docker
+
 ```bash
 docker compose logs webserver
 ```
 
+#### Podman
+
+```bash
+podman logs airflow-webserver
+```
+
 Usually one of: `entrypoint.sh` not executable, bad `AIRFLOW__DATABASE__SQL_ALCHEMY_CONN`, or a failed `pip install`.
+
+---
 
 ### Tasks stuck in "queued" state
 
-Means the worker isn't picking up from Redis. Check:
+Means the worker isn't picking up from Redis. Check worker logs and Redis status:
+
+#### Docker
 
 ```bash
 docker compose logs worker
 docker compose ps redis
 ```
 
+#### Podman
+
+```bash
+podman logs airflow-worker
+podman ps --filter name=redis
+```
+
 Open Flower at `http://localhost:5555` — if no workers appear, the worker container failed to connect to Redis.
+
+---
 
 ### `could not connect to server` on Postgres
 
-Postgres isn't ready yet or credentials in `.env` don't match. Run:
+Postgres isn't ready yet or credentials in `.env` don't match.
+
+#### Docker
 
 ```bash
 docker compose logs postgres
 ```
 
+#### Podman
+
+```bash
+podman logs postgres
+```
+
+---
+
 ### Admin user already exists error on restart
 
-This is handled — `entrypoint.sh` checks before creating. If you still see it, the grep check failed. Run:
+This is handled — `entrypoint.sh` checks before creating. If you still see it, the grep check failed. Verify the user exists:
+
+#### Docker
 
 ```bash
 docker compose exec webserver airflow users list
 ```
+
+#### Podman
+
+```bash
+podman exec airflow-webserver airflow users list
+```
+
+---
+
+### Podman: containers can't reach each other by hostname
+
+This is a known rootless networking issue. Fix:
+
+```bash
+# Check the network was created
+podman network ls
+
+# Inspect DNS settings
+podman network inspect confluent
+```
+
+If DNS isn't resolving service names, add this to `docker-compose.yml` under the `confluent` network:
+
+```yaml
+networks:
+  confluent:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: confluent
+    enable_ipv6: false
+```
+
+Or switch to using static IPs and `/etc/hosts` entries — but fixing the DNS plugin is cleaner.
 
 ---
 
@@ -281,3 +448,4 @@ docker compose exec webserver airflow users list
 - [ ] Put Airflow behind a reverse proxy (nginx/traefik) with HTTPS
 - [ ] Restrict port access via firewall — `8080` and `5555` should not be public
 - [ ] Rotate `AIRFLOW_SECRET_KEY` if it was ever committed or shared
+- [ ] Podman users: confirm rootless mode is active with `podman info | grep rootless`
