@@ -1,0 +1,8 @@
+# Celery executor dependencies — required, do not remove
+apache-airflow[celery,redis]==2.9.3
+
+# Add your DAG dependencies below this line
+
+
+# Podman specific requirements
+podman-compose
