@@ -125,6 +125,8 @@ services:
     image: apache/airflow:2.9.3-python3.9
     container_name: airflow-flower
     depends_on:
+      webserver:
+        condition: service_healthy
       redis:
         condition: service_healthy
     env_file:
@@ -135,7 +137,7 @@ services:
       - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
     ports:
       - "5555:5555"
-    command: bash -c "pip install -r ./requirements.txt && airflow celery flower"
+    command: bash -c "pip install -r ./requirements.txt && airflow db upgrade && airflow celery flower"
     volumes:
       - ./requirements.txt:/opt/airflow/requirements.txt
     networks:
