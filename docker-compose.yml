@@ -137,7 +137,7 @@ services:
       - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
     ports:
       - "5555:5555"
-    command: bash -c "pip install -r ./requirements.txt && airflow celery flower"
+    command: bash -c "pip install -r ./requirements.txt && airflow db upgrade && airflow celery flower"
     volumes:
       - ./requirements.txt:/opt/airflow/requirements.txt
     networks:
